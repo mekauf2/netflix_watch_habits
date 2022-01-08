@@ -1,6 +1,6 @@
 import pandas as pd
 
-def read_and_clean(filepath, profile=None):
+def read_and_clean(filepath, profiles=None):
     """
     Reads in and cleans a csv file to analyze for Netflix watch patterns
 
@@ -11,9 +11,14 @@ def read_and_clean(filepath, profile=None):
     Returns (pd.dataframe): cleaned dataframe
     """
     data = pd.read_csv(filepath)
-    # filter a user if there is one
-    if profile:
-        data = data[ (data["Profile Name"] == profile) ]
+
+    # filter user(s) if given an input
+    if profiles:
+        try:
+            data = data[ (data["Profile Name"].isin(profiles)) ]
+        except:
+            print("Profile(s) not in dataset")
+            exit()
 
     # remove videos with supplemental video types (these are hooks, recaps,
     # teases, previews, etc.)
@@ -24,7 +29,7 @@ def read_and_clean(filepath, profile=None):
                             'Latest Bookmark','Country'], axis = 1)
     data_reduced["Start Time"] =  pd.to_datetime(data_reduced["Start Time"],
                                                 utc=True)
-    
+
     # change the Start Time column into the dataframe's index
     data_utc = data_reduced.set_index('Start Time')
     # convert from UTC timezone to central time
@@ -39,12 +44,22 @@ def read_and_clean(filepath, profile=None):
     # trailers etc (which Netflix counts as views)
     data_cst = data_cst[ (data_cst["Duration"] > '0 days 00:00:30') ]
 
-    # add day and hour of watch time
-    data_cst["Start Day"] = data_cst["Start Time"].dt.weekday
+    # Split up watch start time to make easier to sum
+    data_cst["Start Year"] = data_cst["Start Time"].dt.year
+    data_cst["Start Day"] = data_cst["Start Time"].dt.day
+    data_cst["Start Day of Week"] = data_cst["Start Time"].dt.weekday
     data_cst["Start Hour"] = data_cst["Start Time"].dt.hour
+    data_cst["Start Minute"] = data_cst["Start Time"].dt.minute
+
+    # Convert duration into minutes
+    data_cst["Duration (min)"] = round(data_cst["Duration"].dt.seconds / 60, 2)
+                            # (data_cst["Duration"].dt.hour * 60 +
+                            # data_cst["Duration"].dt.minute +
+                            # data_cst["Duration"].dt.second / 60)
 
     # reorder column order
-    data_cst = data_cst[['Profile Name', 'Start Time', 'Start Day', 'Start Hour', 'Duration', 'Title', 'Device Type']]
+    data_cst = data_cst.drop(["Start Time", "Duration"], axis = 1)
+    data_cst = data_cst[['Profile Name', 'Start Year', 'Start Day', 'Start Day of Week', 'Start Hour', 'Start Minute', 'Duration (min)', 'Title', 'Device Type']]
 
     # get show info more organized by splitting title column
     title_info = data_cst["Title"].str.split(":").apply(lambda row: [col.strip() for col in row])
@@ -79,7 +94,7 @@ def read_and_clean(filepath, profile=None):
                 continue
             if "Comedians in Cars Getting Coffee" == row[0]:
                 subtitle.append("")
-                if row[1] == "New 2018":
+                if row[1] == "New 2018": # special season
                     row[1] = row[1] + ": " + row.pop(2)
                 season.append(row[1])
                 episode.append(": ".join(row[2:]))
@@ -105,19 +120,35 @@ def read_and_clean(filepath, profile=None):
                 season.append(row[2])
                 episode.append(row[3])
                 continue
-                    # movie or some other thing of 1 item length
+        # movie or some other thing of 1 item length
         subtitle.append("")
         season.append("")
         episode.append("")
 
     base_df = data_cst.drop(["Title"], axis = 1)
     final_df = base_df.assign(Title = title,
-                                         Subtitle = subtitle,
-                                         Season = season,
-                                         Episode = episode)
+                              Subtitle = subtitle,
+                              Season = season,
+                              Episode = episode)
     
     final_df.to_csv(r"C:\Users\matth\OneDrive\Documents\Coding Projects\Netflix watch habits\output.csv", index=False)
     return final_df
 
-to_anlyze = read_and_clean("ViewingActivity.csv", "Matthew")
+if __name__ == "__main__":
+    file_path = input("What filepath should we clean? \n").strip()
+    try:
+        f = open(file_path)
+    except:
+        print("path invalid, try a different path")
+        exit()
 
+    user_question = "\nWhat user should we focus on?\n"
+    user_detail = "Please ener profile name(s) seperated by a comma and space \
+        or 'None' to look at all users)\n"
+
+    user_input = input(f"{user_question}{user_detail}")
+    users = list(user_input.split(", "))
+    try:
+        read_and_clean(file_path, users)
+    except:
+        print(f"users entered {users}")
