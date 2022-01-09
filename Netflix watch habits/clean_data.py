@@ -1,3 +1,4 @@
+from datetime import timedelta
 import pandas as pd
 
 def read_and_clean(filepath, profiles=None):
@@ -6,7 +7,7 @@ def read_and_clean(filepath, profiles=None):
 
     Input:
         filepath (filepath): csv filepath
-        profile (str): profile name to filter
+        profile (list of str): profile name(s) to filter
     
     Returns (pd.dataframe): cleaned dataframe
     """
@@ -40,26 +41,53 @@ def read_and_clean(filepath, profiles=None):
     # convert the duration column to a time delta
     data_cst["Duration"] = pd.to_timedelta(data_cst["Duration"])
 
+    # Convert duration into minutes
+    data_cst["Duration (min)"] = round(data_cst["Duration"].dt.seconds / 60, 2)
+
+    # find consecutive watch time
+    consec_data_cst = data_cst[["Start Time", "Duration (min)", "Duration"]]
+
+    consec_watch_time = []
+    num_entries = consec_data_cst.shape[0]
+
+    for i in range(num_entries-1,-1,-1):
+        row = consec_data_cst.iloc[i]
+        current_duration = row["Duration (min)"]
+        if i == num_entries-1:
+            consec_watch_time.append(current_duration)
+        else:
+            current_start = row["Start Time"]
+            prior_watch = consec_data_cst.iloc[i+1]
+            prior_start = prior_watch["Start Time"]
+            prior_duration = prior_watch["Duration"]
+            prior_end = prior_start + prior_duration
+            if current_start - prior_end <= timedelta(minutes=1):
+                time_watching = consec_watch_time[0] + current_duration
+                consec_watch_time[0] = 0
+                consec_watch_time.insert(0, time_watching)
+            else:
+                consec_watch_time.insert(0, current_duration)
+    data_cst = data_cst.assign(Binge = consec_watch_time)
+    data_cst.rename(columns={"Binge": "Binge (min)"}, inplace=True)
+
     # want only if duration is longer than 30 seconds as don't want to include
     # trailers etc (which Netflix counts as views)
     data_cst = data_cst[ (data_cst["Duration"] > '0 days 00:00:30') ]
 
     # Split up watch start time to make easier to sum
     data_cst["Start Year"] = data_cst["Start Time"].dt.year
+    data_cst["Start Month"] = data_cst["Start Time"].dt.month
     data_cst["Start Day"] = data_cst["Start Time"].dt.day
     data_cst["Start Day of Week"] = data_cst["Start Time"].dt.weekday
     data_cst["Start Hour"] = data_cst["Start Time"].dt.hour
     data_cst["Start Minute"] = data_cst["Start Time"].dt.minute
 
-    # Convert duration into minutes
-    data_cst["Duration (min)"] = round(data_cst["Duration"].dt.seconds / 60, 2)
-                            # (data_cst["Duration"].dt.hour * 60 +
-                            # data_cst["Duration"].dt.minute +
-                            # data_cst["Duration"].dt.second / 60)
-
     # reorder column order
     data_cst = data_cst.drop(["Start Time", "Duration"], axis = 1)
-    data_cst = data_cst[['Profile Name', 'Start Year', 'Start Day', 'Start Day of Week', 'Start Hour', 'Start Minute', 'Duration (min)', 'Title', 'Device Type']]
+    data_cst = data_cst[['Profile Name', 'Start Year', 'Start Month',
+                         'Start Day', 'Start Day of Week', 'Start Hour',
+                         'Start Minute', 'Duration (min)', 'Binge (min)',
+                         'Title', 'Device Type']]
 
     # get show info more organized by splitting title column
     title_info = data_cst["Title"].str.split(":").apply(lambda row: [col.strip() for col in row])
@@ -141,14 +169,19 @@ if __name__ == "__main__":
     except:
         print("path invalid, try a different path")
         exit()
+    
+    data = pd.read_csv(file_path)
+    users = data["Profile Name"].unique()
 
     user_question = "\nWhat user should we focus on?\n"
-    user_detail = "Please ener profile name(s) seperated by a comma and space \
-        or 'None' to look at all users)\n"
+    user_detail_1 = "Please ener profile name(s) seperated by a comma and space "
+    user_detail_2 = "or 'None' to look at all users)\n"
 
-    user_input = input(f"{user_question}{user_detail}")
+    user_input = input(f"{user_question}{user_detail_1}{user_detail_2}")
     users = list(user_input.split(", "))
-    try:
-        read_and_clean(file_path, users)
-    except:
-        print(f"users entered {users}")
+    while not data["Profile Name"].isin(users).any():
+        print("users not found, please try again")
+        user_input = input(f"{user_question}{user_detail_1}{user_detail_2}")
+        users = list(user_input.split(", "))
+    read_and_clean(file_path, users)
+    print("complete")
